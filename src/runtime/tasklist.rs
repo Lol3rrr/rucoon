@@ -99,3 +99,105 @@ impl<'t> DerefMut for TaskGuard<'t> {
         unsafe { (&mut *data_ptr).assume_init_mut() }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::runtime::{waker::RWaker, Runtime};
+
+    use super::*;
+
+    async fn example_func() {}
+
+    #[test]
+    fn create_list() {
+        let _ = TaskList::<10>::new();
+    }
+
+    #[test]
+    fn add_get_task() {
+        static RUNTIME: Runtime<10> = Runtime::new();
+        let list = TaskList::<1>::new();
+
+        let id_res = list.add_task(Task::new(
+            example_func(),
+            RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+        ));
+
+        assert!(id_res.is_ok());
+        let id = id_res.unwrap();
+        assert_eq!(0, id.0);
+
+        let guard_res = list.get_task(id.clone());
+        assert!(guard_res.is_some());
+    }
+
+    #[test]
+    fn add_multiple_tasks() {
+        static RUNTIME: Runtime<10> = Runtime::new();
+        let list = TaskList::<3>::new();
+
+        assert!(list
+            .add_task(Task::new(
+                example_func(),
+                RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+            ))
+            .is_ok());
+        assert!(list
+            .add_task(Task::new(
+                example_func(),
+                RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+            ))
+            .is_ok());
+        assert!(list
+            .add_task(Task::new(
+                example_func(),
+                RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+            ))
+            .is_ok());
+    }
+
+    #[test]
+    fn add_to_many_tasks() {
+        static RUNTIME: Runtime<10> = Runtime::new();
+        let list = TaskList::<1>::new();
+
+        assert!(list
+            .add_task(Task::new(
+                example_func(),
+                RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+            ))
+            .is_ok());
+        assert!(list
+            .add_task(Task::new(
+                example_func(),
+                RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+            ))
+            .is_err());
+    }
+
+    #[test]
+    fn get_multiple_guards() {
+        static RUNTIME: Runtime<10> = Runtime::new();
+        let list = TaskList::<1>::new();
+
+        let id_res = list.add_task(Task::new(
+            example_func(),
+            RWaker::new(RUNTIME.queue_sender(), TaskID(0)),
+        ));
+
+        assert!(id_res.is_ok());
+        let id = id_res.unwrap();
+        assert_eq!(0, id.0);
+
+        let first_guard_res = list.get_task(id.clone());
+        assert!(first_guard_res.is_some());
+
+        let second_guard_res = list.get_task(id.clone());
+        assert!(second_guard_res.is_none());
+
+        drop(first_guard_res);
+
+        let third_guard_res = list.get_task(id.clone());
+        assert!(third_guard_res.is_some());
+    }
+}
