@@ -9,17 +9,17 @@ pub struct TestWaker {
     wake_count: Arc<AtomicUsize>,
 }
 
-pub unsafe fn clone(ptr: *const ()) -> RawWaker {
+pub unsafe fn clone(_: *const ()) -> RawWaker {
     todo!()
 }
-pub unsafe fn wake(ptr: *const ()) {
+pub unsafe fn wake(_: *const ()) {
     todo!()
 }
 pub unsafe fn wake_by_ref(ptr: *const ()) {
     let inner = unsafe { &*(ptr as *const TestWaker) };
     inner.wake_count.fetch_add(1, Ordering::SeqCst);
 }
-pub unsafe fn drop(ptr: *const ()) {
+pub unsafe fn drop(_: *const ()) {
     todo!()
 }
 

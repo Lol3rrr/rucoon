@@ -7,7 +7,7 @@ async fn without_yield() {
 }
 
 async fn with_yield() {
-    println!("Wtih Yield Before");
+    println!("With Yield Before");
 
     rucoon::futures::Yielder::new().await;
 
@@ -21,9 +21,9 @@ fn main() {
     RUNTIME.add_task(without_yield()).unwrap();
 
     let sleep_time = std::time::Duration::from_nanos(250);
-    unsafe {
-        RUNTIME.run_with_sleep(|| {
+    RUNTIME
+        .run_with_sleep(|| {
             std::thread::sleep(sleep_time.clone());
-        });
-    }
+        })
+        .unwrap();
 }

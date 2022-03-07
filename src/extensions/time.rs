@@ -4,11 +4,40 @@
 //! # Usage
 //! To be able to use this Extension you need to create a static Timer Instance, which needs to be
 //! supplied to all the other uses in this Module and you also need to run the [Timer::update]
-//! Method at the Interval you specified when creating the Timer Instance
+//! Method at the Interval you specified when creating the Timer Instance.
+//!
+//! # Accuracy
+//! The Interval of the Timer also determines the Accuracy of the Operations performed on it, so
+//! with an Interval of 10ms the Accuracy would also be 10ms.
+//! Timers are also rounded down, so again with an Interval of 10ms the Timers for 10ms, 12ms, 15ms
+//! and 19ms would all be triggered at the same Time, as they all fall into the same "Bucket".
+//!
+//! # Example
+//! ```no_run
+//! # use rucoon::Runtime;
+//! # use rucoon::extensions::time::{Timer, Sleep};
+//! # use std::time::Duration;
+//!
+//! static RUNTIME: Runtime<10> = Runtime::new();
+//! static TIMER: Timer<10> = Timer::new(10);
+//!
+//! async fn func_with_sleep() {
+//!     println!("Before Sleep");
+//!
+//!     Sleep::new(&TIMER, Duration::from_millis(50));
+//!
+//!     println!("After Sleep");
+//! }
+//!
+//! fn main() {
+//!     RUNTIME.add_task(func_with_sleep());
+//!
+//!     RUNTIME.run().unwrap();
+//! }
+//! ```
 
 use core::{
     cell::UnsafeCell,
-    future::Future,
     mem::MaybeUninit,
     sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     task::Waker,
@@ -16,16 +45,20 @@ use core::{
 
 use crate::internal;
 
-/// The Timer
+mod sleep;
+pub use sleep::Sleep;
+
+/// The Timer that is actually used to keep track of all time related Futures or related Tasks
 pub struct Timer<const TASKS: usize> {
     wheel: TimerWheel<TASKS, 128>,
     current_slot: AtomicUsize,
-    steps_ms: usize,
+    steps_ms: u128,
 }
 
 impl<const TASKS: usize> Timer<TASKS> {
-    /// Creates a new Timer Instance
-    pub const fn new(interval_ms: usize) -> Self {
+    /// Creates a new Timer Instance, which should be updated every `interval_ms` milliseconds to
+    /// provide a sort of clock signal for this extensions to work with
+    pub const fn new(interval_ms: u128) -> Self {
         let wheel = TimerWheel::<TASKS, 128>::new();
 
         Self {
@@ -35,17 +68,20 @@ impl<const TASKS: usize> Timer<TASKS> {
         }
     }
 
-    fn register_timer(&self, target_ms: usize, waker: Waker) -> EntryID {
-        let current_slot = self.current_slot.load(Ordering::SeqCst);
+    fn register_timer(&self, target_ms: u128, waker: Waker) -> EntryID {
+        let current_slot = self.current_slot.load(Ordering::SeqCst) as u128;
 
-        let slot_offset = target_ms / self.steps_ms;
-        let target_slot = (current_slot + slot_offset) % 128 - 1;
+        let slot_offset = target_ms / self.steps_ms - 1;
+        let target_slot = (current_slot + slot_offset) % 128;
         let count = (current_slot + slot_offset) / 128 + 1;
 
-        self.wheel.insert_slot(target_slot, count, waker)
+        self.wheel
+            .insert_slot(target_slot as usize, count as usize, waker)
     }
 
-    /// Update
+    /// This method should be called at the Interval specified when creating this Timer, this will
+    /// then handle all actual Timer related work of dispatching correct futures and keeping track
+    /// of Time
     pub fn update(&self) {
         let current_slot = self.current_slot.load(Ordering::SeqCst);
         let next_slot = if current_slot == 127 {
@@ -76,6 +112,27 @@ impl EntryID {
         let task = slot.tasks.get(self.task).unwrap();
 
         task.fired.load(Ordering::SeqCst)
+    }
+
+    pub fn clear<const T: usize>(&mut self, timer: &Timer<T>) {
+        let slot = timer.wheel.slots.get(self.slot).unwrap();
+        let task = slot.tasks.get(self.task).unwrap();
+
+        if task
+            .status
+            .compare_exchange(2, 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+
+        task.fired.store(false, Ordering::SeqCst);
+        task.count.store(0, Ordering::SeqCst);
+
+        let waker_ptr = task.waker.get();
+        let _ = unsafe { waker_ptr.replace(MaybeUninit::uninit()) };
+
+        task.status.store(0, Ordering::SeqCst);
     }
 }
 
@@ -206,59 +263,10 @@ impl<const TASKS: usize, const SLOTS: usize> TimerWheel<TASKS, SLOTS> {
     }
 }
 
-/// The Sleep future allows you to suspend execution for a specified amount of Time
-pub struct Sleep<'t, const TASKS: usize> {
-    timer: &'t Timer<TASKS>,
-    sleep_ms: usize,
-    id: Option<EntryID>,
-}
-
-impl<'t, const TASKS: usize> Sleep<'t, TASKS> {
-    /// Creates a new Sleep Future
-    pub fn new(timer: &'t Timer<TASKS>, sleep_ms: usize) -> Self {
-        Self {
-            timer,
-            sleep_ms,
-            id: None,
-        }
-    }
-}
-
-impl<'t, const TASKS: usize> Future for Sleep<'t, TASKS> {
-    type Output = ();
-
-    fn poll(
-        mut self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Self::Output> {
-        match &self.id {
-            None => {
-                let n_id = self.timer.register_timer(self.sleep_ms, cx.waker().clone());
-
-                self.id = Some(n_id);
-
-                core::task::Poll::Pending
-            }
-            Some(id) => {
-                if id.has_fired(self.timer) {
-                    core::task::Poll::Ready(())
-                } else {
-                    todo!("Was pulled without being Fired")
-                }
-            }
-        }
-    }
-}
-
-impl<'t, const TASKS: usize> Drop for Sleep<'t, TASKS> {
-    fn drop(&mut self) {
-        // TODO
-        // Clear the Entry in the Timer again
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use core::time::Duration;
+
     use alloc::sync::Arc;
 
     use crate::extensions::testing::TestWaker;
@@ -304,6 +312,6 @@ mod tests {
     fn create_sleep() {
         let timer = Timer::<10>::new(10);
 
-        let _ = Sleep::new(&timer, 100);
+        let _ = Sleep::new(&timer, Duration::from_millis(100));
     }
 }

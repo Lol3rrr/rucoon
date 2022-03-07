@@ -2,7 +2,7 @@
 
 use core::{
     future::Future,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 mod task;
@@ -30,6 +30,7 @@ pub struct Runtime<const TASKS: usize> {
     queue: TaskQueue<TASKS>,
     task_list: TaskList<TASKS>,
     running: AtomicBool,
+    running_tasks: AtomicUsize,
 }
 
 /// The Error returned when failing to add a new Task
@@ -53,6 +54,7 @@ impl<const N: usize> Runtime<N> {
             queue: TaskQueue::new(),
             task_list: TaskList::new(),
             running: AtomicBool::new(false),
+            running_tasks: AtomicUsize::new(0),
         }
     }
 
@@ -71,6 +73,8 @@ impl<const N: usize> Runtime<N> {
         if self.queue.sender().enqueue(task_id.clone()).is_err() {
             return Err(AddTaskError::TooManyTasks);
         }
+
+        self.running_tasks.fetch_add(1, Ordering::SeqCst);
 
         Ok(task_id)
     }
@@ -117,11 +121,12 @@ impl<const N: usize> Runtime<N> {
 
             match task.poll(&mut ctx) {
                 core::task::Poll::Ready(_) => {
-                    // todo!("Task is ready");
+                    let prev = self.running_tasks.fetch_sub(1, Ordering::SeqCst);
+                    if prev == 1 {
+                        return Ok(());
+                    }
                 }
-                core::task::Poll::Pending => {
-                    // todo!("Task is pending");
-                }
+                core::task::Poll::Pending => {}
             };
         }
     }

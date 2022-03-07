@@ -1,7 +1,10 @@
 #![feature(thread_is_running)]
 
 mod sleep {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::{
+        sync::atomic::{AtomicBool, Ordering},
+        time::Duration,
+    };
 
     use rucoon::{
         extensions::time::{Sleep, Timer},
@@ -18,7 +21,7 @@ mod sleep {
 
         async fn test_func() {
             REGISTERED.store(true, Ordering::SeqCst);
-            Sleep::new(&TIMER, 50).await;
+            Sleep::new(&TIMER, Duration::from_millis(50)).await;
 
             DONE.store(true, Ordering::SeqCst);
         }
