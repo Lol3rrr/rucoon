@@ -14,15 +14,15 @@ use super::{EntryID, Timer};
 /// The Accuracy of this Sleep depends on the Interval of the given Timer, so if the Timer has an
 /// interval of 10ms, the Accuracy is also 10ms and cannot be made more accurate, without changing
 /// the Timer
-pub struct Sleep<'t, const TASKS: usize> {
-    timer: &'t Timer<TASKS>,
+pub struct Sleep<'t, const TASKS: usize, const SLOTS: usize> {
+    timer: &'t Timer<TASKS, SLOTS>,
     sleep_ms: u128,
     id: Option<EntryID>,
 }
 
-impl<'t, const TASKS: usize> Sleep<'t, TASKS> {
+impl<'t, const TASKS: usize, const SLOTS: usize> Sleep<'t, TASKS, SLOTS> {
     /// Creates a new Sleep Future
-    pub fn new(timer: &'t Timer<TASKS>, duration: Duration) -> Self {
+    pub fn new(timer: &'t Timer<TASKS, SLOTS>, duration: Duration) -> Self {
         Self {
             timer,
             sleep_ms: duration.as_millis(),
@@ -31,7 +31,7 @@ impl<'t, const TASKS: usize> Sleep<'t, TASKS> {
     }
 }
 
-impl<'t, const TASKS: usize> Future for Sleep<'t, TASKS> {
+impl<'t, const TASKS: usize, const SLOTS: usize> Future for Sleep<'t, TASKS, SLOTS> {
     type Output = ();
 
     fn poll(
@@ -57,7 +57,7 @@ impl<'t, const TASKS: usize> Future for Sleep<'t, TASKS> {
     }
 }
 
-impl<'t, const TASKS: usize> Drop for Sleep<'t, TASKS> {
+impl<'t, const TASKS: usize, const SLOTS: usize> Drop for Sleep<'t, TASKS, SLOTS> {
     fn drop(&mut self) {
         match &mut self.id {
             Some(id) => {

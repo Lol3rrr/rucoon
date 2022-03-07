@@ -49,17 +49,17 @@ mod sleep;
 pub use sleep::Sleep;
 
 /// The Timer that is actually used to keep track of all time related Futures or related Tasks
-pub struct Timer<const TASKS: usize> {
-    wheel: TimerWheel<TASKS, 128>,
+pub struct Timer<const TASKS: usize, const SLOTS: usize = 128> {
+    wheel: TimerWheel<TASKS, SLOTS>,
     current_slot: AtomicUsize,
     steps_ms: u128,
 }
 
-impl<const TASKS: usize> Timer<TASKS> {
+impl<const TASKS: usize, const SLOTS: usize> Timer<TASKS, SLOTS> {
     /// Creates a new Timer Instance, which should be updated every `interval_ms` milliseconds to
     /// provide a sort of clock signal for this extensions to work with
     pub const fn new(interval_ms: u128) -> Self {
-        let wheel = TimerWheel::<TASKS, 128>::new();
+        let wheel = TimerWheel::<TASKS, SLOTS>::new();
 
         Self {
             wheel,
@@ -72,8 +72,8 @@ impl<const TASKS: usize> Timer<TASKS> {
         let current_slot = self.current_slot.load(Ordering::SeqCst) as u128;
 
         let slot_offset = target_ms / self.steps_ms - 1;
-        let target_slot = (current_slot + slot_offset) % 128;
-        let count = (current_slot + slot_offset) / 128 + 1;
+        let target_slot = (current_slot + slot_offset) % SLOTS as u128;
+        let count = (current_slot + slot_offset) / SLOTS as u128 + 1;
 
         self.wheel
             .insert_slot(target_slot as usize, count as usize, waker)
@@ -84,11 +84,8 @@ impl<const TASKS: usize> Timer<TASKS> {
     /// of Time
     pub fn update(&self) {
         let current_slot = self.current_slot.load(Ordering::SeqCst);
-        let next_slot = if current_slot == 127 {
-            0
-        } else {
-            current_slot + 1
-        };
+        let next_slot = (current_slot + 1) % SLOTS;
+
         let _ = self.current_slot.compare_exchange(
             current_slot,
             next_slot,
@@ -107,14 +104,14 @@ struct EntryID {
 }
 
 impl EntryID {
-    pub fn has_fired<const T: usize>(&self, timer: &Timer<T>) -> bool {
+    pub fn has_fired<const T: usize, const S: usize>(&self, timer: &Timer<T, S>) -> bool {
         let slot = timer.wheel.slots.get(self.slot).unwrap();
         let task = slot.tasks.get(self.task).unwrap();
 
         task.fired.load(Ordering::SeqCst)
     }
 
-    pub fn clear<const T: usize>(&mut self, timer: &Timer<T>) {
+    pub fn clear<const T: usize, const S: usize>(&mut self, timer: &Timer<T, S>) {
         let slot = timer.wheel.slots.get(self.slot).unwrap();
         let task = slot.tasks.get(self.task).unwrap();
 
