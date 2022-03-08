@@ -15,7 +15,7 @@ async fn with_yield() {
 }
 
 fn main() {
-    println!("Testing");
+    println!("Starting");
 
     RUNTIME.add_task(with_yield()).unwrap();
     RUNTIME.add_task(without_yield()).unwrap();

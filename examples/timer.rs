@@ -1,10 +1,10 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rucoon::extensions::time;
 use rucoon::runtime;
 
 static RUNTIME: runtime::Runtime<10> = runtime::Runtime::new();
-static TIMER: time::Timer<10> = time::Timer::new(10);
+static TIMER: time::Timer<10> = time::Timer::new(1);
 
 async fn without_sleep() {
     println!("Without Sleep");
@@ -21,16 +21,19 @@ async fn with_sleep() {
 }
 
 fn main() {
-    println!("Testing");
+    println!("Starting");
 
     RUNTIME.add_task(with_sleep()).unwrap();
     RUNTIME.add_task(without_sleep()).unwrap();
 
-    let interval_time = Duration::from_millis(10);
+    let interval_time = Duration::from_millis(1);
     std::thread::spawn(move || loop {
+        let start = Instant::now();
+
         TIMER.update();
 
-        std::thread::sleep(interval_time.clone());
+        let sleep_time = interval_time.saturating_sub(start.elapsed());
+        std::thread::sleep(sleep_time);
     });
 
     let sleep_time = Duration::from_nanos(250);

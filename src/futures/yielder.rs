@@ -35,3 +35,13 @@ impl Future for Yielder {
         }
     }
 }
+
+/// Creates a future that will yield once when polled. This enables you to insert yield
+/// points in long running computations, to allow other Futures to be run between these
+/// Points and avoid starving the Runtime.
+///
+/// Note: This is a simple Wrapper around [Yielder::new] to make it more ergonomic to use
+/// and it's also more familiar to await a function call like this.
+pub fn yield_now() -> Yielder {
+    Yielder::new()
+}

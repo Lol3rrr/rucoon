@@ -16,7 +16,7 @@
 //! ```no_run
 //! # use rucoon::Runtime;
 //! # use rucoon::extensions::time::{Timer, Sleep};
-//! # use std::time::Duration;
+//! # use std::time::{Instant, Duration};
 //!
 //! static RUNTIME: Runtime<10> = Runtime::new();
 //! static TIMER: Timer<10> = Timer::new(10);
@@ -31,6 +31,21 @@
 //!
 //! fn main() {
 //!     RUNTIME.add_task(func_with_sleep());
+//!
+//!     // This thread will be responsible for providing the "Clock Ticks" to actually advance the
+//!     // Timer and make it work
+//!     std::thread::spawn(|| {
+//!         let interval_time = Duration::from_millis(10);
+//!
+//!         loop {
+//!             let start = Instant::now();
+//!
+//!             TIMER.update();
+//!
+//!             let sleep_time = interval_time.saturating_sub(start.elapsed());
+//!             std::thread::sleep(sleep_time);
+//!         }
+//!     });
 //!
 //!     RUNTIME.run().unwrap();
 //! }
@@ -258,6 +273,16 @@ impl<const TASKS: usize, const SLOTS: usize> TimerWheel<TASKS, SLOTS> {
 
         slot_entry.fire();
     }
+}
+
+/// This is a simply a convient wrapper function for [Sleep::new] as it feels more natural to call
+/// a Function and then await that, instead of creating a new Sleep Instance and then using await
+/// on that Instance, although they are both doing the same thing
+pub fn sleep<'t, const T: usize, const S: usize>(
+    timer: &'t Timer<T, S>,
+    duration: core::time::Duration,
+) -> Sleep<'t, T, S> {
+    Sleep::new(timer, duration)
 }
 
 #[cfg(test)]

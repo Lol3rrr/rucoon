@@ -21,7 +21,8 @@ pub struct Sleep<'t, const TASKS: usize, const SLOTS: usize> {
 }
 
 impl<'t, const TASKS: usize, const SLOTS: usize> Sleep<'t, TASKS, SLOTS> {
-    /// Creates a new Sleep Future
+    /// Creates a new Sleep Future that will be Ready after the specified Duration starting from
+    /// the Point in time when it was first polled
     pub fn new(timer: &'t Timer<TASKS, SLOTS>, duration: Duration) -> Self {
         Self {
             timer,

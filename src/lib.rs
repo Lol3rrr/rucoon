@@ -31,13 +31,13 @@
 //! async fn first_task() {
 //!     loop {
 //!         println!("First Task");
-//!         rucoon::futures::Yielder::new().await;
+//!         rucoon::futures::yield_now().await;
 //!     }
 //! }
 //! async fn second_task() {
 //!     loop {
 //!         println!("Second Task");
-//!         rucoon::futures::Yielder::new().await;
+//!         rucoon::futures::yield_now().await;
 //!     }
 //! }
 //!
