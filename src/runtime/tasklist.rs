@@ -2,19 +2,22 @@ use core::{
     cell::UnsafeCell,
     mem::MaybeUninit,
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicU8, Ordering},
+    sync::atomic::Ordering,
 };
 
 use crate::internal;
 
 use super::{Task, TaskID};
 
+mod status;
+use status::{AtomicStatus, SlotStatus};
+
 pub struct TaskList<const N: usize> {
     slots: [TaskSlot; N],
 }
 
 struct TaskSlot {
-    status: AtomicU8,
+    status: AtomicStatus,
     task: UnsafeCell<MaybeUninit<Task>>,
 }
 
@@ -27,7 +30,7 @@ impl<const N: usize> TaskList<N> {
             N,
             TaskSlot,
             TaskSlot {
-                status: AtomicU8::new(0),
+                status: AtomicStatus::new(SlotStatus::Empty),
                 task: UnsafeCell::new(MaybeUninit::uninit()),
             }
         );
@@ -36,26 +39,42 @@ impl<const N: usize> TaskList<N> {
     }
 
     pub(crate) fn add_task(&self, task: Task) -> Result<TaskID, ()> {
-        for (index, slot) in self.slots.iter().enumerate() {
-            if slot
-                .status
-                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_err()
-            {
-                continue;
-            }
+        // Search for a free Slot by trying to lock each one, this is definetly not the best Method
+        // because we cause a lot of contention on these Atomics in the CPU itself, but it works
+        // for now and it can always be changed later if it does become a bigger Problem
+        let (index, slot) = self
+            .slots
+            .iter()
+            .enumerate()
+            .find(|(_, slot)| {
+                slot.status
+                    .compare_exchange(
+                        SlotStatus::Empty,
+                        SlotStatus::Locked,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    )
+                    .is_ok()
+            })
+            // If we can't lock a Slot for the Task, we just return an Error indicating that no
+            // free Space is currently available
+            .ok_or(())?;
 
-            let data_ptr = slot.task.get();
-            unsafe {
-                data_ptr.write(MaybeUninit::new(task));
-            }
+        // The Slot is now locked by us and therefore we have exclusive access to its Data
 
-            slot.status.store(2, Ordering::SeqCst);
-
-            return Ok(TaskID(index));
+        let data_ptr = slot.task.get();
+        // Safety:
+        // This is safe because as said previously, we now have exclusive access to the Data in the
+        // Slot and therefore we can safely store the task we want to add into the Cell
+        unsafe {
+            data_ptr.write(MaybeUninit::new(task));
         }
 
-        Err(())
+        // We have now setup the Slot correctly and it can be used by the Rest of the Runtime so we
+        // set it's Status to Set indicating that the Data in it is valid and can be used
+        slot.status.store(SlotStatus::Set, Ordering::SeqCst);
+
+        Ok(TaskID(index))
     }
 
     pub(crate) fn get_task(&self, id: TaskID) -> Option<TaskGuard<'_>> {
@@ -63,25 +82,47 @@ impl<const N: usize> TaskList<N> {
 
         let slot = self.slots.get(index)?;
 
+        TaskGuard::obtain(slot)
+    }
+}
+
+/// The TaskGuard allows you access a single Task in the List, the List itself allows only one
+/// TaskGaurd to exist per Task, so every TaskGuard is exclusive
+pub struct TaskGuard<'t> {
+    task: &'t TaskSlot,
+}
+
+impl<'t> TaskGuard<'t> {
+    /// This is used to obtain a TaskGuard for the given Slot.
+    ///
+    /// This fails if the Slot has a different Status than Set, because that means it is either
+    /// Empty, Locked or currently being accessed by a different TaskGuard, all of which means we
+    /// can not safely access this Slot with a new TaskGuard
+    fn obtain(slot: &'t TaskSlot) -> Option<Self> {
+        // Try to mark the Slot as Accessed, abort if this fails as that means the Slot is already
+        // being used by someone else
         if slot
             .status
-            .compare_exchange(2, 3, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(
+                SlotStatus::Set,
+                SlotStatus::Accessed,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
             .is_err()
         {
             return None;
         }
 
-        Some(TaskGuard { task: slot })
+        Some(Self { task: slot })
     }
-}
-
-pub struct TaskGuard<'t> {
-    task: &'t TaskSlot,
 }
 
 impl<'t> Drop for TaskGuard<'t> {
     fn drop(&mut self) {
-        self.task.status.store(2, Ordering::SeqCst);
+        // We mark the underlying Task as SetButFree again and therefore making sure that we can
+        // get a new TaskGuard for this Task in the Future again
+        self.task.status.store(SlotStatus::Set, Ordering::SeqCst);
     }
 }
 
@@ -90,12 +131,18 @@ impl<'t> Deref for TaskGuard<'t> {
 
     fn deref(&self) -> &Self::Target {
         let data_ptr = self.task.task.get();
+        // Safety
+        // This should be save because we have exclusive access to this Slot and therefor noone
+        // else can access this Data while the TaskGuard still exists
         unsafe { (&*data_ptr).assume_init_ref() }
     }
 }
 impl<'t> DerefMut for TaskGuard<'t> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let data_ptr = self.task.task.get();
+        // Safety
+        // This should be save because we have exclusive access to this Slot and therefor noone
+        // else can access this Data while the TaskGuard still exists
         unsafe { (&mut *data_ptr).assume_init_mut() }
     }
 }
