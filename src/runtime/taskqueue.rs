@@ -60,33 +60,40 @@ impl<const N: usize> TaskQueue<N> {
         }
     }
 
+    /// Attempts to dequeue a TaskID once
+    fn try_dequeue(&self) -> Option<TaskID> {
+        let head = self.head.load(Ordering::SeqCst);
+        let next_head = (head + 1) % N;
+
+        let slot = self.slots.get(head).unwrap();
+        match slot
+            .status
+            .compare_exchange(2, 1, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => {}
+            Err(0) => return None,
+            Err(1) => return None,
+            Err(2) => unreachable!(),
+            Err(_) => unreachable!(),
+        };
+
+        let _ = self
+            .head
+            .compare_exchange(head, next_head, Ordering::SeqCst, Ordering::SeqCst);
+
+        let data_ptr = slot.data.get();
+        let data = unsafe { data_ptr.replace(MaybeUninit::uninit()).assume_init() };
+
+        slot.status.store(0, Ordering::SeqCst);
+
+        Some(data)
+    }
+
     pub(crate) fn dequeue(&self) -> Option<TaskID> {
         for _ in 0..5 {
-            let head = self.head.load(Ordering::SeqCst);
-            let next_head = (head + 1) % N;
-
-            let slot = self.slots.get(head).unwrap();
-            match slot
-                .status
-                .compare_exchange(2, 1, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => {}
-                Err(0) => continue,
-                Err(1) => continue,
-                Err(2) => unreachable!(),
-                Err(_) => unreachable!(),
-            };
-
-            let _ = self
-                .head
-                .compare_exchange(head, next_head, Ordering::SeqCst, Ordering::SeqCst);
-
-            let data_ptr = slot.data.get();
-            let data = unsafe { data_ptr.replace(MaybeUninit::uninit()).assume_init() };
-
-            slot.status.store(0, Ordering::SeqCst);
-
-            return Some(data);
+            if let Some(id) = self.try_dequeue() {
+                return Some(id);
+            }
         }
 
         None
@@ -94,37 +101,43 @@ impl<const N: usize> TaskQueue<N> {
 }
 
 impl<'s> QueueSender<'s> {
+    fn try_enqueue(&self, id: TaskID) -> Result<(), TaskID> {
+        let current_tail = self.tail.load(Ordering::SeqCst);
+        let next_tail = (current_tail + 1) % self.slots.len();
+
+        let slot = self.slots.get(current_tail).unwrap();
+        match slot
+            .status
+            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => {}
+            Err(1) => return Err(id),
+            Err(2) => return Err(id),
+            _ => unreachable!(),
+        };
+
+        let _ =
+            self.tail
+                .compare_exchange(current_tail, next_tail, Ordering::SeqCst, Ordering::SeqCst);
+
+        let data_ptr = slot.data.get();
+        unsafe {
+            data_ptr.write(MaybeUninit::new(id));
+        }
+        slot.status.store(2, Ordering::SeqCst);
+
+        return Ok(());
+    }
+
     /// Enqueues the TaskID on the Queue
-    pub fn enqueue(&self, id: TaskID) -> Result<(), TaskID> {
+    pub fn enqueue(&self, mut id: TaskID) -> Result<(), TaskID> {
         for _ in 0..5 {
-            let current_tail = self.tail.load(Ordering::SeqCst);
-            let next_tail = (current_tail + 1) % self.slots.len();
-
-            let slot = self.slots.get(current_tail).unwrap();
-            match slot
-                .status
-                .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
-            {
-                Ok(_) => {}
-                Err(1) => continue,
-                Err(2) => continue,
-                _ => unreachable!(),
+            match self.try_enqueue(id) {
+                Ok(_) => return Ok(()),
+                Err(i) => {
+                    id = i;
+                }
             };
-
-            let _ = self.tail.compare_exchange(
-                current_tail,
-                next_tail,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            );
-
-            let data_ptr = slot.data.get();
-            unsafe {
-                data_ptr.write(MaybeUninit::new(id));
-            }
-            slot.status.store(2, Ordering::SeqCst);
-
-            return Ok(());
         }
 
         Err(id)
