@@ -126,7 +126,7 @@ impl<'s> QueueSender<'s> {
         }
         slot.status.store(2, Ordering::SeqCst);
 
-        return Ok(());
+        Ok(())
     }
 
     /// Enqueues the TaskID on the Queue

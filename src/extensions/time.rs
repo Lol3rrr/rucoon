@@ -278,10 +278,10 @@ impl<const TASKS: usize, const SLOTS: usize> TimerWheel<TASKS, SLOTS> {
 /// This is a simply a convient wrapper function for [Sleep::new] as it feels more natural to call
 /// a Function and then await that, instead of creating a new Sleep Instance and then using await
 /// on that Instance, although they are both doing the same thing
-pub fn sleep<'t, const T: usize, const S: usize>(
-    timer: &'t Timer<T, S>,
+pub fn sleep<const T: usize, const S: usize>(
+    timer: &'_ Timer<T, S>,
     duration: core::time::Duration,
-) -> Sleep<'t, T, S> {
+) -> Sleep<'_, T, S> {
     Sleep::new(timer, duration)
 }
 
