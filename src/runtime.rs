@@ -39,6 +39,7 @@ mod executor;
 use executor::Executor;
 
 pub mod multithreaded;
+pub use multithreaded::MultithreadedRuntime;
 
 /// The ID used to identify a Task
 #[derive(Debug, Clone)]

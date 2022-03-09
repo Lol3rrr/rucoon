@@ -20,7 +20,11 @@
 //! fn main() {
 //!     RUNTIME.add_task(some_task());
 //!
-//!     let threads: Vec<_> = RUNTIME.run_iter().map(|f| std::thread::spawn(f)).collect();
+//!     let threads: Vec<_> = RUNTIME
+//!         .run_funcs_with_sleep(|| || {})
+//!         .into_iter()
+//!         .map(|f| std::thread::spawn(f))
+//!         .collect();
 //!
 //!     for handle in threads {
 //!         handle.join().unwrap();
@@ -95,23 +99,37 @@ impl<const TASKS: usize, const THREADS: usize> MultithreadedRuntime<TASKS, THREA
         Ok(task_id)
     }
 
-    /// Creates an iterator of Closures for you to run independantely. Each Closure corresponds to
+    /// Creates an Array of Closures for you to run independantely. Each Closure corresponds to
     /// a single Thread for the Runtime, which allows you to decide how exactly these are run in
     /// your environment.
     ///
-    /// # Note
-    /// The Length of this Iterator is Equal to the THREADS constant on the Runtime
-    pub fn run_iter(
+    /// The Sleep Closure is used to create the actual Sleep Closure, which allows you to setup
+    /// more advanced Sleep Closures to hopefully enable more advanced sleep functions
+    pub fn run_funcs_with_sleep<FS, S>(
         &'static self,
-    ) -> impl Iterator<Item = impl Fn() -> Result<(), RunError>> + 'static {
-        self.executors.iter().map(move |exec| {
+        sleep: FS,
+    ) -> [impl FnOnce() -> Result<(), RunError>; THREADS]
+    where
+        FS: Fn() -> S,
+        S: FnMut(),
+    {
+        let mut raw_result = [None; THREADS];
+        for (index, elem) in raw_result.iter_mut().enumerate() {
+            *elem = Some(self.executors.get(index).unwrap());
+        }
+
+        let execs = raw_result.map(|opt| opt.unwrap());
+
+        execs.map(move |exec| {
             let mut other_execs: [&Executor<TASKS>; THREADS] =
                 internal::const_array!(THREADS, &Executor<TASKS>, exec);
             for (i, o_exec) in self.executors.iter().enumerate() {
                 other_execs[i] = o_exec;
             }
 
-            move || exec.run(|| {}, &self.task_list, &self.running_tasks, &other_execs)
+            let n_sleep = sleep();
+
+            move || exec.run(n_sleep, &self.task_list, &self.running_tasks, &other_execs)
         })
     }
 }
@@ -123,11 +141,5 @@ mod tests {
     #[test]
     fn new_instance() {
         static _CRUNTIME: MultithreadedRuntime<10, 2> = MultithreadedRuntime::new();
-    }
-
-    #[test]
-    fn run_iter_length() {
-        static RUNTIME2: MultithreadedRuntime<10, 2> = MultithreadedRuntime::new();
-        assert_eq!(2, RUNTIME2.run_iter().fold(0, |c, _| c + 1));
     }
 }

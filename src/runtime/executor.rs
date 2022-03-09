@@ -27,13 +27,13 @@ impl<const TASKS: usize> Executor<TASKS> {
     /// Actually starts executing the Tasks in its Queue
     pub fn run<F>(
         &self,
-        sleep: F,
+        mut sleep: F,
         tasks: &TaskList<TASKS>,
         running_tasks: &AtomicUsize,
         executors: &[&Self],
     ) -> Result<(), RunError>
     where
-        F: Fn(),
+        F: FnMut(),
     {
         // If the Executor was already started once, we will return this Error
         if self

@@ -20,7 +20,11 @@ fn main() {
         RUNTIME.add_task(testing()).unwrap();
     }
 
-    let handles: Vec<_> = RUNTIME.run_iter().map(|f| std::thread::spawn(f)).collect();
+    let handles: Vec<_> = RUNTIME
+        .run_funcs_with_sleep(|| || {})
+        .into_iter()
+        .map(|f| std::thread::spawn(f))
+        .collect();
 
     for handle in handles {
         handle.join().unwrap().unwrap();

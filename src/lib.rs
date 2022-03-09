@@ -54,7 +54,7 @@ extern crate alloc;
 
 pub mod futures;
 pub mod runtime;
-pub use runtime::Runtime;
+pub use runtime::{MultithreadedRuntime, Runtime};
 pub mod extensions;
 
 pub(crate) mod internal;
