@@ -1,4 +1,4 @@
-//! A Port of the Queue described as in this Post: https://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
+//! A Port of the Queue described as in this Post: <https://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue>
 
 use core::{
     cell::UnsafeCell,

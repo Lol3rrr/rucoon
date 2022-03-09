@@ -20,7 +20,7 @@
 
 use core::{
     future::Future,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 mod task;
@@ -35,18 +35,22 @@ pub(crate) use taskqueue::{QueueSender, TaskQueue};
 mod waker;
 use self::waker::RWaker;
 
+mod executor;
+use executor::Executor;
+
+pub mod multithreaded;
+
 /// The ID used to identify a Task
 #[derive(Debug, Clone)]
 pub struct TaskID(pub(crate) usize);
 
-/// The actual Runtime, for more details see the [runtime](crate::runtime) Module Documentation
+/// A single threaded Runtime, for more details see the [runtime](crate::runtime) Module Documentation
 ///
 /// The TASKS constant is used to set the maximum Number of Tasks that can be run on this Instance
 pub struct Runtime<const TASKS: usize> {
-    queue: TaskQueue<TASKS>,
     task_list: TaskList<TASKS>,
-    running: AtomicBool,
     running_tasks: AtomicUsize,
+    executor: Executor<TASKS>,
 }
 
 /// The Error returned when failing to add a new Task
@@ -67,10 +71,9 @@ impl<const N: usize> Runtime<N> {
     /// Creates a new empty Runtime
     pub const fn new() -> Self {
         Self {
-            queue: TaskQueue::new(),
             task_list: TaskList::new(),
-            running: AtomicBool::new(false),
             running_tasks: AtomicUsize::new(0),
+            executor: Executor::new(0),
         }
     }
 
@@ -82,12 +85,21 @@ impl<const N: usize> Runtime<N> {
     {
         let waker = RWaker::new(self.queue_sender(), TaskID(0));
         let task = Task::new(fut, waker);
-        let task_id = self.task_list.add_task(task).unwrap();
+        let task_id = match self.task_list.add_task(task) {
+            Ok(id) => id,
+            Err(_) => return Err(AddTaskError::TooManyTasks),
+        };
 
         let mut task_ref = self.task_list.get_task(task_id.clone()).unwrap();
         task_ref.update_waker(RWaker::new(self.queue_sender(), task_id.clone()));
 
-        if self.queue.sender().enqueue(task_id.clone()).is_err() {
+        if self
+            .executor
+            .queue
+            .sender()
+            .enqueue(task_id.clone())
+            .is_err()
+        {
             return Err(AddTaskError::TooManyTasks);
         }
 
@@ -98,7 +110,7 @@ impl<const N: usize> Runtime<N> {
 
     /// Returns a handle to a Sender to add Tasks to be polled
     const fn queue_sender(&self) -> QueueSender<'_> {
-        self.queue.sender()
+        self.executor.queue.sender()
     }
 
     /// Actually starts the Runtime and starts running the Tasks, see
@@ -120,41 +132,36 @@ impl<const N: usize> Runtime<N> {
     /// whether or not it is actually still running or not.
     /// If this is the first time it is started, it will block the current Thread and run until
     /// every Task added to it has completed and will then return Ok(()) once it is done.
-    pub fn run_with_sleep<S>(&self, mut sleep: S) -> Result<(), RunError>
+    pub fn run_with_sleep<S>(&self, sleep: S) -> Result<(), RunError>
     where
-        S: FnMut(),
+        S: Fn(),
     {
-        if self
-            .running
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return Err(RunError::AlreadyRunning);
-        }
+        self.executor.run(
+            sleep,
+            &self.task_list,
+            &self.running_tasks,
+            &[&self.executor],
+        )
+    }
+}
 
-        loop {
-            let task_id = match self.queue.dequeue() {
-                Some(t) => t,
-                None => {
-                    sleep();
-                    continue;
-                }
-            };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-            let mut task = self.task_list.get_task(task_id).unwrap();
+    async fn sample_func() {}
 
-            let waker = waker::create_waker(task.waker_ptr());
-            let mut ctx = core::task::Context::from_waker(&waker);
+    #[test]
+    fn create_new() {
+        let _runtime = Runtime::<10>::new();
+    }
 
-            match task.poll(&mut ctx) {
-                core::task::Poll::Ready(_) => {
-                    let prev = self.running_tasks.fetch_sub(1, Ordering::SeqCst);
-                    if prev == 1 {
-                        return Ok(());
-                    }
-                }
-                core::task::Poll::Pending => {}
-            };
-        }
+    #[test]
+    fn add_too_many_tasks() {
+        static RUNTIME: Runtime<2> = Runtime::<2>::new();
+
+        assert!(RUNTIME.add_task(sample_func()).is_ok());
+        assert!(RUNTIME.add_task(sample_func()).is_ok());
+        assert!(RUNTIME.add_task(sample_func()).is_err());
     }
 }
