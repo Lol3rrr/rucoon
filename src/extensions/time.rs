@@ -88,7 +88,7 @@ impl<const TASKS: usize, const SLOTS: usize> Timer<TASKS, SLOTS> {
 
         let slot_offset = target_ms / self.steps_ms - 1;
         let target_slot = (current_slot + slot_offset) % SLOTS as u128;
-        let count = (current_slot + slot_offset) / SLOTS as u128 + 1;
+        let count = slot_offset / SLOTS as u128 + 1;
 
         self.wheel
             .insert_slot(target_slot as usize, count as usize, waker)
