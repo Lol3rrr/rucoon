@@ -86,7 +86,7 @@ impl<const TASKS: usize, const SLOTS: usize> Timer<TASKS, SLOTS> {
     fn register_timer(&self, target_ms: u128, waker: Waker) -> EntryID {
         let current_slot = self.current_slot.load(Ordering::SeqCst) as u128;
 
-        let slot_offset = target_ms / self.steps_ms - 1;
+        let slot_offset = (target_ms / self.steps_ms).saturating_sub(1);
         let target_slot = (current_slot + slot_offset) % SLOTS as u128;
         let count = slot_offset / SLOTS as u128 + 1;
 
